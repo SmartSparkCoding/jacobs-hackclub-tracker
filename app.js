@@ -32,12 +32,12 @@
           <article class="stat-card stat-card--primary">
             <span class="stat-card__label">Total amount</span>
             <strong id="totalAmount">$0.00</strong>
-            <small>Shown in dollars at the top of the page</small>
+            <small>Shown in dollars as per the Hack Club standard</small>
           </article>
           <article class="stat-card">
             <span class="stat-card__label">Total in GBP</span>
             <strong id="gbpAmount">£0.00</strong>
-            <small id="gbpRateLabel">Converted from USD using a live rate</small>
+            <small id="gbpRateLabel">Converted from USD using a NON-live rate</small>
           </article>
         </div>
       </section>
