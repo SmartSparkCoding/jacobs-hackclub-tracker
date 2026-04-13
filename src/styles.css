@@ -253,6 +253,12 @@ body::before {
   flex-wrap: wrap;
 }
 
+.form-actions__buttons {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
 .primary-button,
 .secondary-button {
   border: 0;
@@ -273,6 +279,18 @@ body::before {
   color: var(--text);
   background: rgba(255, 255, 255, 0.05);
   border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.secondary-button--ghost,
+.ghost-button {
+  background: transparent;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  color: var(--text);
+}
+
+.ghost-button--danger {
+  border-color: rgba(245, 139, 139, 0.32);
+  color: #ffc7c7;
 }
 
 .primary-button:hover,
@@ -297,6 +315,13 @@ body::before {
   display: flex;
   flex-wrap: wrap;
   gap: 10px;
+}
+
+.entry-card__actions {
+  display: flex;
+  gap: 10px;
+  margin-top: 16px;
+  flex-wrap: wrap;
 }
 
 .type-chip {

@@ -1,5 +1,6 @@
 (() => {
-  const DEFAULT_EVENT_TYPES = ['Shipment', 'Grant', 'Event', 'Sticker Drop', 'Other'];
+  const DEFAULT_EVENT_TYPES = ['Flavortown', 'Stasis', 'Blueprint', 'FuseRing', 'Hack Club HQ'];
+  const LEGACY_EVENT_TYPES = ['Shipment', 'Grant', 'Event', 'Sticker Drop', 'Other'];
   const STORAGE_KEYS = {
     demoEntries: 'jacobs-tracker-demo-entries',
     demoEventTypes: 'jacobs-tracker-demo-event-types',
@@ -34,9 +35,9 @@
             <small>Shown in dollars at the top of the page</small>
           </article>
           <article class="stat-card">
-            <span class="stat-card__label">Tracked items</span>
-            <strong id="entryCount">0</strong>
-            <small>Saved entries across every event type</small>
+            <span class="stat-card__label">Total in GBP</span>
+            <strong id="gbpAmount">£0.00</strong>
+            <small id="gbpRateLabel">Converted from USD using a live rate</small>
           </article>
         </div>
       </section>
@@ -73,7 +74,10 @@
               <textarea name="notes" rows="4" placeholder="Optional notes about the item, source, or delivery"></textarea>
             </label>
             <div class="form-actions field--full">
-              <button type="submit" class="primary-button">Add item</button>
+              <div class="form-actions__buttons">
+                <button type="submit" class="primary-button">Add item</button>
+                <button type="button" id="cancelEditButton" class="secondary-button secondary-button--ghost">Cancel edit</button>
+              </div>
               <p id="formFeedback" class="form-feedback"></p>
             </div>
           </form>
@@ -110,7 +114,8 @@
 
   const elements = {
     totalAmount: document.querySelector('#totalAmount'),
-    entryCount: document.querySelector('#entryCount'),
+    gbpAmount: document.querySelector('#gbpAmount'),
+    gbpRateLabel: document.querySelector('#gbpRateLabel'),
     connectionStatus: document.querySelector('#connectionStatus'),
     entryForm: document.querySelector('#entryForm'),
     eventTypeForm: document.querySelector('#eventTypeForm'),
@@ -118,17 +123,28 @@
     eventTypeList: document.querySelector('#eventTypeList'),
     entriesList: document.querySelector('#entriesList'),
     formFeedback: document.querySelector('#formFeedback'),
+    cancelEditButton: document.querySelector('#cancelEditButton'),
   };
 
   const state = {
     entries: [],
     eventTypes: [...DEFAULT_EVENT_TYPES],
+    editingEntryId: null,
+    usdToGbpRate: 0.79,
   };
+
+  const entryFormButton = () => elements.entryForm.querySelector('button[type="submit"]');
 
   const formatCurrency = (value) =>
     new Intl.NumberFormat('en-US', {
       style: 'currency',
       currency: 'USD',
+    }).format(value);
+
+  const formatCurrencyGbp = (value) =>
+    new Intl.NumberFormat('en-GB', {
+      style: 'currency',
+      currency: 'GBP',
     }).format(value);
 
   const formatDate = (value) => {
@@ -144,13 +160,89 @@
 
   const normalizeType = (value) => value.trim().toLowerCase();
 
+  const normalizeEventTypes = (eventTypes) =>
+    [...new Set(eventTypes.filter(Boolean).filter((eventType) => !LEGACY_EVENT_TYPES.some((legacyType) => normalizeType(legacyType) === normalizeType(eventType))))];
+
+  const getEntryFormValues = () => {
+    const formData = new FormData(elements.entryForm);
+    return {
+      name: String(formData.get('name') ?? '').trim(),
+      date: String(formData.get('date') ?? '').trim(),
+      eventType: String(formData.get('eventType') ?? '').trim(),
+      amount: Number.parseFloat(String(formData.get('amount') ?? '0')),
+      notes: String(formData.get('notes') ?? '').trim(),
+    };
+  };
+
+  const clearEntryEditor = () => {
+    state.editingEntryId = null;
+    elements.entryForm.reset();
+    entryFormButton().textContent = 'Add item';
+    elements.cancelEditButton.hidden = true;
+    setFeedback('');
+    elements.eventTypeSelect.value = state.eventTypes[0] ?? '';
+  };
+
+  const startEditingEntry = (entryId) => {
+    const entry = state.entries.find((item) => item.id === entryId);
+    if (!entry) {
+      setFeedback('That entry could not be found.', 'danger');
+      return;
+    }
+
+    state.editingEntryId = entryId;
+    elements.entryForm.name.value = entry.name ?? '';
+    elements.entryForm.date.value = entry.date ?? '';
+    elements.entryForm.amount.value = entry.amount ?? '';
+    elements.entryForm.notes.value = entry.notes ?? '';
+    renderEventTypes();
+    if (state.eventTypes.some((eventType) => normalizeType(eventType) === normalizeType(entry.eventType))) {
+      elements.eventTypeSelect.value = entry.eventType;
+    } else {
+      elements.eventTypeSelect.value = entry.eventType;
+    }
+    entryFormButton().textContent = 'Save changes';
+    elements.cancelEditButton.hidden = false;
+    setFeedback(`Editing ${entry.name}.`, 'warning');
+  };
+
+  const syncEntryState = (nextEntries) => {
+    state.entries = nextEntries;
+
+    if (state.editingEntryId && !state.entries.some((entry) => entry.id === state.editingEntryId)) {
+      clearEntryEditor();
+    }
+
+    renderEntries();
+  };
+
+  const updateLocalEntry = (entryId, patch) => {
+    syncEntryState(
+      state.entries.map((entry) => (entry.id === entryId ? { ...entry, ...patch } : entry)),
+    );
+    writeLocalState(STORAGE_KEYS.demoEntries, state.entries);
+  };
+
+  const deleteLocalEntry = (entryId) => {
+    syncEntryState(state.entries.filter((entry) => entry.id !== entryId));
+    writeLocalState(STORAGE_KEYS.demoEntries, state.entries);
+  };
+
   const updateSummary = () => {
     const total = state.entries.reduce((sum, entry) => sum + Number(entry.amount || 0), 0);
+    const gbpTotal = total * state.usdToGbpRate;
     elements.totalAmount.textContent = formatCurrency(total);
-    elements.entryCount.textContent = `${state.entries.length}`;
+    elements.gbpAmount.textContent = formatCurrencyGbp(gbpTotal);
+    elements.gbpRateLabel.textContent = `Converted at $1 = £${state.usdToGbpRate.toFixed(4)}`;
   };
 
   const renderEventTypes = () => {
+    state.eventTypes = normalizeEventTypes([
+      ...DEFAULT_EVENT_TYPES,
+      ...state.eventTypes,
+      ...state.entries.map((entry) => entry.eventType),
+    ]);
+
     const options = state.eventTypes
       .map((eventType) => `<option value="${eventType}">${eventType}</option>`)
       .join('');
@@ -190,6 +282,10 @@
               <strong>${formatCurrency(entry.amount)}</strong>
             </div>
             <p class="entry-card__notes">${entry.notes || 'No notes added.'}</p>
+            <div class="entry-card__actions">
+              <button type="button" class="ghost-button" data-entry-action="edit" data-entry-id="${entry.id}">Edit</button>
+              <button type="button" class="ghost-button ghost-button--danger" data-entry-action="delete" data-entry-id="${entry.id}">Delete</button>
+            </div>
           </article>
         `,
       )
@@ -208,6 +304,14 @@
     elements.formFeedback.dataset.tone = tone;
   };
 
+  const describeFirebaseError = (error) => {
+    if (!error) {
+      return 'Unknown Firebase error';
+    }
+
+    return error.code ? `${error.code}: ${error.message ?? 'Request failed'}` : (error.message ?? String(error));
+  };
+
   const readLocalState = (key, fallback) => {
     try {
       const raw = window.localStorage.getItem(key);
@@ -223,10 +327,38 @@
 
   const syncDemoState = () => {
     state.entries = readLocalState(STORAGE_KEYS.demoEntries, []);
-    state.eventTypes = readLocalState(STORAGE_KEYS.demoEventTypes, DEFAULT_EVENT_TYPES);
+    const savedTypes = readLocalState(STORAGE_KEYS.demoEventTypes, DEFAULT_EVENT_TYPES);
+    state.eventTypes = normalizeEventTypes([
+      ...DEFAULT_EVENT_TYPES,
+      ...savedTypes,
+      ...state.entries.map((entry) => entry.eventType),
+    ]);
     renderEventTypes();
     renderEntries();
     setStatus('Demo mode', 'warning');
+  };
+
+  const refreshExchangeRate = async () => {
+    try {
+      const response = await fetch('https://api.frankfurter.app/latest?from=USD&to=GBP');
+      if (!response.ok) {
+        throw new Error(`Rate request failed with ${response.status}`);
+      }
+
+      const data = await response.json();
+      const rate = Number(data?.rates?.GBP);
+
+      if (!Number.isFinite(rate) || rate <= 0) {
+        throw new Error('Invalid GBP rate returned from the API');
+      }
+
+      state.usdToGbpRate = rate;
+      elements.gbpRateLabel.textContent = `Converted at $1 = £${rate.toFixed(4)} (live)`;
+      updateSummary();
+    } catch (error) {
+      console.error(error);
+      elements.gbpRateLabel.textContent = `Converted using fallback rate of $1 = £${state.usdToGbpRate.toFixed(4)}`;
+    }
   };
 
   const addLocalEntry = (entry) => {
@@ -240,6 +372,18 @@
     ];
     writeLocalState(STORAGE_KEYS.demoEntries, state.entries);
     renderEntries();
+  };
+
+  const deleteFirebaseEntry = async (entryId) => {
+    await firestore.collection('entries').doc(entryId).delete();
+  };
+
+  const updateFirebaseEntry = async (entryId, patch) => {
+    await firestore.collection('entries').doc(entryId).update(patch);
+  };
+
+  const deleteFirebaseEventType = async (eventTypeId) => {
+    await firestore.collection('eventTypes').doc(eventTypeId).delete();
   };
 
   const addLocalType = (typeName) => {
@@ -259,12 +403,15 @@
     }
 
     const existingTypes = await firestore.collection('eventTypes').get();
-
-    if (!existingTypes.empty) {
-      return;
-    }
+    const existingNames = new Set(
+      existingTypes.docs.map((doc) => normalizeType(doc.data().name ?? '')),
+    );
 
     for (const eventType of DEFAULT_EVENT_TYPES) {
+      if (existingNames.has(normalizeType(eventType))) {
+        continue;
+      }
+
       await firestore.collection('eventTypes').add({
         name: eventType,
         createdAt: Date.now(),
@@ -291,14 +438,31 @@
 
       unsubEntries = entriesQuery.onSnapshot((snapshot) => {
         state.entries = snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
+        state.eventTypes = normalizeEventTypes([
+          ...DEFAULT_EVENT_TYPES,
+          ...state.eventTypes,
+          ...state.entries.map((entry) => entry.eventType),
+        ]);
         renderEntries();
+        renderEventTypes();
         setStatus('Connected to Firebase', 'success');
+      }, (error) => {
+        console.error(error);
+        setStatus('Entries listener failed', 'danger');
+        setFeedback(`Firebase entries listener error: ${describeFirebaseError(error)}`, 'danger');
       });
 
       unsubEventTypes = eventTypesQuery.onSnapshot((snapshot) => {
-        const remoteTypes = snapshot.docs.map((doc) => doc.data().name).filter(Boolean);
+        const remoteTypes = snapshot.docs
+          .map((doc) => doc.data().name)
+          .filter(Boolean)
+          .filter((eventType) => !LEGACY_EVENT_TYPES.some((legacyType) => normalizeType(legacyType) === normalizeType(eventType)));
         state.eventTypes = [...new Set([...DEFAULT_EVENT_TYPES, ...remoteTypes])];
         renderEventTypes();
+      }, (error) => {
+        console.error(error);
+        setStatus('Event types listener failed', 'danger');
+        setFeedback(`Firebase event type listener error: ${describeFirebaseError(error)}`, 'danger');
       });
     } catch (error) {
       console.error(error);
@@ -332,7 +496,7 @@
         createdAt: Date.now(),
       }).catch((error) => {
         console.error(error);
-        setFeedback('Could not save the new event type.', 'danger');
+        setFeedback(`Could not save the new event type: ${describeFirebaseError(error)}`, 'danger');
       });
     } else {
       addLocalType(name);
@@ -345,12 +509,7 @@
     event.preventDefault();
     setFeedback('');
 
-    const formData = new FormData(elements.entryForm);
-    const name = String(formData.get('name') ?? '').trim();
-    const date = String(formData.get('date') ?? '').trim();
-    const eventType = String(formData.get('eventType') ?? '').trim();
-    const amount = Number.parseFloat(String(formData.get('amount') ?? '0'));
-    const notes = String(formData.get('notes') ?? '').trim();
+    const { name, date, eventType, amount, notes } = getEntryFormValues();
 
     if (!name || !date || !eventType || Number.isNaN(amount)) {
       setFeedback('Please complete every required field.', 'danger');
@@ -368,21 +527,45 @@
 
     if (firebaseAvailable && firestore) {
       try {
-        await firestore.collection('entries').add(payload);
-        setFeedback('Saved to Firebase.', 'success');
-        elements.entryForm.reset();
-        elements.eventTypeSelect.value = state.eventTypes[0] ?? '';
+        if (state.editingEntryId) {
+          await updateFirebaseEntry(state.editingEntryId, {
+            name,
+            date,
+            eventType,
+            amount,
+            notes,
+            updatedAt: Date.now(),
+          });
+          setFeedback('Changes saved to Firebase.', 'success');
+        } else {
+          await firestore.collection('entries').add(payload);
+          setFeedback('Saved to Firebase.', 'success');
+        }
+        clearEntryEditor();
       } catch (error) {
         console.error(error);
-        setFeedback('The item could not be saved.', 'danger');
+        setFeedback(`The item could not be saved: ${describeFirebaseError(error)}`, 'danger');
       }
+      return;
+    }
+
+    if (state.editingEntryId) {
+      updateLocalEntry(state.editingEntryId, {
+        name,
+        date,
+        eventType,
+        amount,
+        notes,
+        updatedAt: Date.now(),
+      });
+      setFeedback('Changes saved locally in demo mode.', 'success');
+      clearEntryEditor();
       return;
     }
 
     addLocalEntry(payload);
     setFeedback('Saved locally in demo mode.', 'success');
-    elements.entryForm.reset();
-    elements.eventTypeSelect.value = state.eventTypes[0] ?? '';
+    clearEntryEditor();
   });
 
   elements.eventTypeForm.addEventListener('submit', async (event) => {
@@ -411,7 +594,7 @@
         elements.eventTypeForm.reset();
       } catch (error) {
         console.error(error);
-        setFeedback('Could not add that event type.', 'danger');
+        setFeedback(`Could not add that event type: ${describeFirebaseError(error)}`, 'danger');
       }
       return;
     }
@@ -421,12 +604,67 @@
     elements.eventTypeForm.reset();
   });
 
+  elements.entriesList.addEventListener('click', async (event) => {
+    const button = event.target.closest('button[data-entry-action]');
+    if (!button) {
+      return;
+    }
+
+    const entryId = button.dataset.entryId;
+    const action = button.dataset.entryAction;
+    if (!entryId || !action) {
+      return;
+    }
+
+    if (action === 'edit') {
+      startEditingEntry(entryId);
+      return;
+    }
+
+    if (action === 'delete') {
+      const entry = state.entries.find((item) => item.id === entryId);
+      if (!entry) {
+        setFeedback('That entry was not found.', 'danger');
+        return;
+      }
+
+      const confirmed = window.confirm(`Delete ${entry.name}? This cannot be undone.`);
+      if (!confirmed) {
+        return;
+      }
+
+      try {
+        if (firebaseAvailable && firestore) {
+          await deleteFirebaseEntry(entryId);
+        } else {
+          deleteLocalEntry(entryId);
+        }
+
+        if (state.editingEntryId === entryId) {
+          clearEntryEditor();
+        }
+
+        setFeedback('Entry removed.', 'success');
+      } catch (error) {
+        console.error(error);
+        setFeedback(`Could not delete the entry: ${describeFirebaseError(error)}`, 'danger');
+      }
+    }
+  });
+
   if (firebaseAvailable) {
     bootstrap();
+    refreshExchangeRate();
   } else {
     syncDemoState();
     setStatus('Demo mode', 'warning');
   }
+
+  elements.cancelEditButton.hidden = true;
+  elements.cancelEditButton.addEventListener('click', () => {
+    clearEntryEditor();
+    setFeedback('Edit cancelled.', 'neutral');
+  });
 
   window.addEventListener('beforeunload', () => {
     unsubEntries?.();
